@@ -1,0 +1,54 @@
+# Ignore environment files
+.env
+.env.local
+.env.*.local
+
+# Ignore configuration files that may contain secrets
+config.json
+secrets.yaml
+credentials.yml
+
+# Ignore key files
+*.pem
+*.key
+id_rsa
+id_dsa
+
+# Ignore database files
+*.db
+*.sqlite
+
+# Ignore log files that might contain sensitive information
+*.log
+
+# Ignore directories that might contain secrets
+secrets/
+private/
+confidential/
+
+# Ignore package manager directories
+node_modules/
+vendor/
+
+# Ignore IDE-specific directories that might contain configuration with secrets
+.vscode/
+.idea/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore backup files
+*.bak
+*.swp
+*~
+
+# Ignore compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore temporary files
+*.tmp
+*.temp
