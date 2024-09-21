@@ -1,0 +1,41 @@
+---
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Node.js setup and linting/formatting with ESLint and Prettier
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22.8.0'  # Use Node.js v22.8.0
+
+      - name: Cache node modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: "${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}"
+          restore-keys: |
+            ${{ runner.os }}-node-modules
+
+      - name: Install Node.js dependencies
+        run: npm install
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Prettier
+        run: npm run prettier:check
