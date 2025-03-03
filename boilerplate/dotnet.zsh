@@ -1,5 +1,8 @@
 #!/bin/zsh
 
+# Replace {project} and {.net app} like so:
+# given ~/AuthAPI/AuthApi do that!
+
 # Navigate to the app directory
 cd ~/{project}/{.net app}
 
