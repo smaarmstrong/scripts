@@ -6,6 +6,19 @@ reading texts, drilling grammar, quick usage questions. Built for Rocky Linux
 
 Nothing leaves the machine, so it's fine for a headless ThinkPad with no cloud account.
 
+## Quickstart (copy/paste on the Rocky box)
+
+```bash
+git clone git@github.com:smaarmstrong/scripts.git
+cd scripts/linux/ollama
+./ollama_install.sh            # install Ollama + systemd service
+./ollama_install.sh models     # pull the model (default: qwen2.5:7b)
+
+export TARGET_LANG="German"    # the language you're learning
+export NATIVE_LANG="English"
+./tutor.sh tutor               # start the interactive tutor
+```
+
 ## 1. Install (run on the Rocky box)
 
 ```bash
