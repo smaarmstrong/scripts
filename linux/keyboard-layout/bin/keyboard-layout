@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+#
+# keyboard-layout — toggle between the standard UK keyboard layout (gb) and the
+# UK International layout (gb-intl / gb variant "intl").
+#
+# It picks the right mechanism for wherever it's run:
+#   * Graphical GNOME/Wayland session -> gsettings (the only thing native Wayland
+#     apps obey), plus setxkbmap for any XWayland apps.
+#   * Graphical X11 session            -> setxkbmap.
+#   * Text virtual console (TTY)        -> localectl (needs root; auto sudo).
+#
+# Usage:
+#   keyboard-layout gb        # standard UK
+#   keyboard-layout intl      # UK International
+#   keyboard-layout toggle    # switch to whichever one isn't active
+#   keyboard-layout status    # print the current layout
+#
+set -euo pipefail
+
+# --- layout definitions -----------------------------------------------------
+# We only deal with two named layouts. Each maps onto the various tools' idea
+# of a layout/variant.
+#   gb      -> layout "gb", no variant
+#   gb-intl -> layout "gb", variant "intl"
+
+usage() {
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+err() { echo "keyboard-layout: $*" >&2; }
+
+# --- environment detection --------------------------------------------------
+# graphical: we have a display (X11 or Wayland). Otherwise assume a TTY.
+is_graphical() {
+  [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]
+}
+is_wayland() { [ -n "${WAYLAND_DISPLAY:-}" ] || [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- readers: what's the current layout? ------------------------------------
+# Each returns "gb" or "gb-intl", or nothing if it can't tell.
+
+status_gsettings() {
+  have gsettings || return 1
+  local s
+  s="$(gsettings get org.gnome.desktop.input-sources sources 2>/dev/null)" || return 1
+  case "$s" in
+    *"gb+intl"*|*"gb', 'intl"*) echo "gb-intl" ;;
+    *"'gb'"*)                   echo "gb" ;;
+    *) return 1 ;;
+  esac
+}
+
+status_setxkbmap() {
+  have setxkbmap || return 1
+  local q; q="$(setxkbmap -query 2>/dev/null)" || return 1
+  echo "$q" | grep -q '^layout:.*\bgb\b' || return 1
+  if echo "$q" | grep -q '^variant:.*\bintl\b'; then echo "gb-intl"; else echo "gb"; fi
+}
+
+status_localectl() {
+  have localectl || return 1
+  local out; out="$(localectl status 2>/dev/null)" || return 1
+  # Prefer the X11 layout/variant lines; fall back to the VC keymap.
+  if echo "$out" | grep -qi 'X11 Variant:.*intl'; then echo "gb-intl"; return 0; fi
+  if echo "$out" | grep -qiE 'X11 Layout:.*\bgb\b'; then echo "gb"; return 0; fi
+  case "$(echo "$out" | grep -i 'VC Keymap:' | awk '{print $NF}')" in
+    *intl*) echo "gb-intl" ;;
+    gb|uk)  echo "gb" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Current layout, chosen by context.
+current_layout() {
+  if is_graphical; then
+    if is_wayland; then status_gsettings && return 0; fi
+    status_setxkbmap && return 0
+    status_gsettings && return 0
+  fi
+  status_localectl && return 0
+  return 1
+}
+
+# --- writers: apply a layout ------------------------------------------------
+
+apply_graphical() {  # $1 = gb | gb-intl
+  local target="$1" variant="" xkbvariant=""
+  [ "$target" = "gb-intl" ] && { variant="gb+intl"; xkbvariant="intl"; } || variant="gb"
+
+  local applied=0
+  # gsettings drives native Wayland (GNOME) input sources.
+  if is_wayland && have gsettings; then
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', '$variant')]"
+    applied=1
+  fi
+  # setxkbmap covers X11 sessions and XWayland clients under Wayland.
+  if have setxkbmap && [ -n "${DISPLAY:-}" ]; then
+    if [ -n "$xkbvariant" ]; then
+      setxkbmap -layout gb -variant "$xkbvariant" 2>/dev/null && applied=1 || true
+    else
+      setxkbmap -layout gb 2>/dev/null && applied=1 || true
+    fi
+  fi
+  [ "$applied" -eq 1 ]
+}
+
+apply_console() {  # $1 = gb | gb-intl
+  local target="$1"
+  have localectl || { err "localectl not found; cannot set console layout."; return 1; }
+
+  # Wrap localectl with sudo when we're not root (talks to systemd-localed via
+  # polkit). Works fine over SSH on a headless box.
+  local -a pre=()
+  if [ "$(id -u)" -ne 0 ]; then
+    have sudo || { err "root required for localectl and sudo not found. Re-run as root."; return 1; }
+    echo "Elevating with sudo for localectl..."
+    pre=(sudo)
+  fi
+
+  # Primary: set-x11-keymap sets BOTH the X11 layout and the derived VC keymap,
+  # and is the only clean way to get the "intl" variant. On a minimal Rocky
+  # install this needs the xkeyboard-config package to do the conversion.
+  local -a cmd
+  if [ "$target" = "gb-intl" ]; then
+    cmd=(localectl set-x11-keymap gb pc105 intl)
+  else
+    cmd=(localectl set-x11-keymap gb)
+  fi
+  if "${pre[@]}" "${cmd[@]}"; then
+    return 0
+  fi
+
+  # Fallback (headless, no xkeyboard-config): set the console keymap directly.
+  # kbd ships "uk"/"gb" but no dedicated gb-intl console map, so intl falls back
+  # to the plain UK console keymap — we warn so it's not a silent surprise.
+  err "set-x11-keymap failed (is 'xkeyboard-config' installed? dnf install xkeyboard-config)."
+  err "falling back to a direct console keymap via set-keymap."
+  [ "$target" = "gb-intl" ] && err "note: no gb-intl console keymap exists; using plain 'uk'."
+  local km="uk"
+  "${pre[@]}" localectl set-keymap "$km"
+}
+
+apply_layout() {  # $1 = gb | gb-intl
+  if is_graphical; then
+    apply_graphical "$1" && return 0
+    err "graphical apply failed; falling back to console mechanism."
+  fi
+  apply_console "$1"
+}
+
+pretty() { [ "$1" = "gb-intl" ] && echo "UK International (gb-intl)" || echo "Standard UK (gb)"; }
+
+# --- command dispatch -------------------------------------------------------
+cmd="${1:-status}"
+case "$cmd" in
+  gb)
+    apply_layout gb   && echo "Switched to $(pretty gb)."
+    ;;
+  intl|gb-intl)
+    apply_layout gb-intl && echo "Switched to $(pretty gb-intl)."
+    ;;
+  toggle)
+    cur="$(current_layout || echo gb)"   # default to gb if undetectable
+    if [ "$cur" = "gb-intl" ]; then target=gb; else target=gb-intl; fi
+    apply_layout "$target" && echo "Toggled: $(pretty "$cur") -> $(pretty "$target")."
+    ;;
+  status)
+    if cur="$(current_layout)"; then
+      echo "Current layout: $(pretty "$cur")"
+    else
+      err "could not determine the current layout."; exit 1
+    fi
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    err "unknown command: $cmd"; echo; usage; exit 1
+    ;;
+esac
